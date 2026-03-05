@@ -25,6 +25,23 @@ MAX_RETRIES = 3
 DEFAULT_MAX_CHARS = 1500
 
 
+def get_int_env(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+
+    value = raw.strip()
+    if not value:
+        logging.warning("环境变量 %s 为空，使用默认值 %s", name, default)
+        return default
+
+    try:
+        return int(value)
+    except ValueError:
+        logging.warning("环境变量 %s 不是有效整数(%r)，使用默认值 %s", name, raw, default)
+        return default
+
+
 def load_prompt() -> str:
     if not PROMPT_PATH.exists():
         raise FileNotFoundError(f"未找到 prompt 文件: {PROMPT_PATH}")
@@ -217,7 +234,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="生成并推送 AI 投资早报")
     parser.add_argument("--mode", choices=["markdown", "image"], default=os.getenv("DEFAULT_MODE", "markdown"))
     parser.add_argument("--force", action="store_true")
-    parser.add_argument("--max-chars", type=int, default=int(os.getenv("MAX_CHARS", str(DEFAULT_MAX_CHARS))))
+    parser.add_argument("--max-chars", type=int, default=get_int_env("MAX_CHARS", DEFAULT_MAX_CHARS))
     return parser.parse_args()
 
 

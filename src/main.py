@@ -49,9 +49,19 @@ def load_prompt() -> str:
 
 
 def get_client() -> OpenAI:
-    api_key = os.environ.get("OPENAI_API_KEY")
+    api_key = (
+        os.environ.get("OPENAI_COMPAT_API_KEY")
+        or os.environ.get("OPENAI_API_KEY")
+    )
     if not api_key:
-        raise RuntimeError("缺少 OPENAI_API_KEY")
+        raise RuntimeError("缺少 OPENAI_API_KEY（或 OPENAI_COMPAT_API_KEY）")
+
+    base_url = (
+        os.environ.get("OPENAI_COMPAT_BASE_URL")
+        or os.environ.get("OPENAI_BASE_URL")
+    )
+    if base_url:
+        return OpenAI(api_key=api_key, base_url=base_url.strip())
     return OpenAI(api_key=api_key)
 
 

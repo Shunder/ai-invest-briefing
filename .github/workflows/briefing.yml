@@ -24,6 +24,9 @@ jobs:
     runs-on: ubuntu-latest
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_COMPAT_API_KEY: ${{ secrets.OPENAI_COMPAT_API_KEY }}
+      OPENAI_COMPAT_BASE_URL: ${{ secrets.OPENAI_COMPAT_BASE_URL }}
+      OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL }}
       WECOM_WEBHOOK: ${{ secrets.WECOM_WEBHOOK }}
       DEFAULT_MODE: ${{ vars.DEFAULT_MODE }}
       MAX_CHARS: ${{ vars.MAX_CHARS }}

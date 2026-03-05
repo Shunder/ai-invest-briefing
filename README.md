@@ -46,12 +46,17 @@ requirements.txt                 # Python 依赖
 1. `OPENAI_API_KEY`：OpenAI API Key
 2. `WECOM_WEBHOOK`：企业微信群机器人 webhook（完整 URL）
 
+> 如果你使用 OpenAI 协议兼容平台（如自建网关/第三方模型平台），可以改用：
+> - `OPENAI_COMPAT_API_KEY`：兼容平台 API Key（优先级高于 `OPENAI_API_KEY`）
+> - `OPENAI_COMPAT_BASE_URL`：兼容平台 Base URL（例如 `https://your-endpoint.example.com/v1`）
+
 ### 第三步（可选）：配置 GitHub Variables
 
 在 **Settings → Secrets and variables → Actions → Variables** 添加：
 
 - `DEFAULT_MODE`：`markdown` 或 `image`（默认建议 `markdown`）
 - `MAX_CHARS`：Markdown 最大长度，默认 `1500`
+- `OPENAI_BASE_URL`（可选）：OpenAI 官方 SDK 支持的 Base URL（若未设置 `OPENAI_COMPAT_BASE_URL`，会读取此变量）
 
 ### 第四步：手动触发一次验证
 
@@ -139,7 +144,8 @@ cron: '0 23 * * *'
 - 已实现：自动重试 2 次（指数退避）。
 - 处理建议：
   1. 检查 `OPENAI_API_KEY` 是否有效
-  2. 稍后重跑 workflow（可能是临时网络波动）
+  2. 若使用兼容平台，检查 `OPENAI_COMPAT_BASE_URL` 是否为 OpenAI 协议兼容的 `/v1` 接口
+  3. 稍后重跑 workflow（可能是临时网络波动）
 
 ### 8.2 企业微信发送失败
 - 现象：日志报 `errcode != 0` 或 HTTP 非 200。
@@ -184,3 +190,15 @@ export WECOM_WEBHOOK='https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxx'
 python src/main.py --mode markdown
 ```
 
+### 使用 OpenAI 协议兼容平台（自定义 URL + API Key）
+
+```bash
+export OPENAI_COMPAT_BASE_URL='https://your-endpoint.example.com/v1'
+export OPENAI_COMPAT_API_KEY='your_compat_api_key'
+export WECOM_WEBHOOK='https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxx'
+python src/main.py --mode markdown
+```
+
+变量优先级：
+- API Key：`OPENAI_COMPAT_API_KEY` > `OPENAI_API_KEY`
+- Base URL：`OPENAI_COMPAT_BASE_URL` > `OPENAI_BASE_URL` > OpenAI SDK 默认地址

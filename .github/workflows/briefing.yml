@@ -1,0 +1,63 @@
+name: Daily AI Briefing
+
+on:
+  schedule:
+    - cron: '30 0 * * *'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: '输出模式'
+        required: true
+        default: markdown
+        type: choice
+        options:
+          - markdown
+          - image
+      force:
+        description: '是否强制生成（true/false）'
+        required: true
+        default: false
+        type: boolean
+
+jobs:
+  generate-and-send:
+    runs-on: ubuntu-latest
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      WECOM_WEBHOOK: ${{ secrets.WECOM_WEBHOOK }}
+      DEFAULT_MODE: ${{ vars.DEFAULT_MODE }}
+      MAX_CHARS: ${{ vars.MAX_CHARS }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Resolve runtime inputs
+        id: runtime
+        run: |
+          MODE="${{ github.event.inputs.mode }}"
+          FORCE="${{ github.event.inputs.force }}"
+
+          if [ -z "$MODE" ]; then
+            MODE="${DEFAULT_MODE:-markdown}"
+          fi
+
+          if [ -z "$FORCE" ]; then
+            FORCE="false"
+          fi
+
+          echo "mode=$MODE" >> "$GITHUB_OUTPUT"
+          echo "force=$FORCE" >> "$GITHUB_OUTPUT"
+
+      - name: Run briefing job
+        run: |
+          python src/main.py --mode "${{ steps.runtime.outputs.mode }}" $([ "${{ steps.runtime.outputs.force }}" = "true" ] && echo "--force")

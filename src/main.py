@@ -10,7 +10,6 @@ import time
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
-from typing import Tuple
 
 import requests
 from openai import OpenAI
@@ -97,6 +96,16 @@ def retry_with_backoff(func, action_name: str):
 def call_openai(mode: str, max_chars: int, force: bool) -> str:
     prompt = load_prompt()
     client = get_client()
+    compat_base_url = (
+        os.environ.get("OPENAI_COMPAT_BASE_URL")
+        or os.environ.get("OPENAI_BASE_URL")
+        or ""
+    ).strip().rstrip("/")
+    compat_api_key = (
+        os.environ.get("OPENAI_COMPAT_API_KEY")
+        or os.environ.get("OPENAI_API_KEY")
+        or ""
+    )
     today = datetime.now(ZoneInfo("Asia/Singapore")).strftime("%Y-%m-%d")
     extra = (
         f"\n\n执行参数：mode={mode}，max_chars={max_chars}，force={str(force).lower()}，日期={today}。"
@@ -104,6 +113,31 @@ def call_openai(mode: str, max_chars: int, force: bool) -> str:
     )
 
     def _call():
+        if compat_base_url.endswith("/chat/completions"):
+            payload = {
+                "model": "gpt-5.2",
+                "messages": [
+                    {"role": "system", "content": prompt},
+                    {
+                        "role": "user",
+                        "content": (
+                            "请基于今天最新可得信息生成《每日投资情报早报》。"
+                            "必须执行至少5次web_search，涵盖宏观、科技、中国港股、黄金美元、地缘/贸易，"
+                            "并尽可能补充一次资金流/ETF。"
+                            "输出必须是中文 markdown，且包含来源链接与日期（YYYY-MM-DD）。"
+                            + extra
+                        ),
+                    },
+                ],
+            }
+            headers = {
+                "Authorization": f"Bearer {compat_api_key}",
+                "Content-Type": "application/json",
+            }
+            resp = requests.post(compat_base_url, headers=headers, json=payload, timeout=180)
+            resp.raise_for_status()
+            return {"compat_chat_completion": resp.json()}
+
         return client.responses.create(
             model="gpt-5.2",
             tools=[{"type": "web_search"}],
@@ -124,7 +158,16 @@ def call_openai(mode: str, max_chars: int, force: bool) -> str:
         )
 
     resp = retry_with_backoff(_call, "OpenAI Responses API 调用")
-    text = (resp.output_text or "").strip()
+    if isinstance(resp, dict) and "compat_chat_completion" in resp:
+        data = resp["compat_chat_completion"]
+        text = (
+            data.get("choices", [{}])[0]
+            .get("message", {})
+            .get("content", "")
+            .strip()
+        )
+    else:
+        text = (resp.output_text or "").strip()
     if not text:
         raise RuntimeError("OpenAI 返回内容为空")
     return text

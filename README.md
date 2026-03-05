@@ -202,3 +202,7 @@ python src/main.py --mode markdown
 变量优先级：
 - API Key：`OPENAI_COMPAT_API_KEY` > `OPENAI_API_KEY`
 - Base URL：`OPENAI_COMPAT_BASE_URL` > `OPENAI_BASE_URL` > OpenAI SDK 默认地址
+
+兼容性说明：
+- 若 Base URL 以 `/chat/completions` 结尾（用户写死完整接口地址），程序会直接调用该 Chat Completions 接口，不再拼接 `/responses`，避免出现 `.../chat/completions/responses` 的 404 错误。
+- 其他情况默认走 OpenAI Responses API。

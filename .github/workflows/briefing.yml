@@ -13,6 +13,7 @@ on:
         options:
           - markdown
           - image
+          - card
       force:
         description: '是否强制生成（true/false）'
         required: true
@@ -30,6 +31,8 @@ jobs:
       WECOM_WEBHOOK: ${{ secrets.WECOM_WEBHOOK }}
       DEFAULT_MODE: ${{ vars.DEFAULT_MODE }}
       MAX_CHARS: ${{ vars.MAX_CHARS }}
+      BRIEFING_PUBLIC_URL: ${{ vars.BRIEFING_PUBLIC_URL }}
+      BRIEFING_COVER_URL: ${{ vars.BRIEFING_COVER_URL }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4

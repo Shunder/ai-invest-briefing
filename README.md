@@ -4,7 +4,7 @@
 - 每天自动生成一份《每日投资情报早报》（中文）
 - 自动推送到企业微信群机器人（WeCom webhook）
 - 支持 GitHub Actions 手动触发
-- 支持两种输出模式：`markdown` 和 `image`
+- 支持三种输出模式：`markdown`、`image` 和 `card`
 
 > 触发方式仅包含：`schedule`（每天一次）+ `workflow_dispatch`（手动触发）。
 
@@ -16,6 +16,7 @@
 - **手动触发**：可在 Actions 页面点击 **Run workflow**，并选择：
   - `mode=markdown`：发送 Markdown 排版消息
   - `mode=image`：先生成 PNG 图片并发送；若图片发送失败，自动降级发送 Markdown
+  - `mode=card`：生成网页并发送企业微信图文卡片（news），点击后查看网页
   - `force=true/false`：是否强制生成（会传递给生成逻辑）
 - **模型与检索**：固定使用 `GPT-5.2` + `web_search` 工具生成，避免依赖 Tasks 邮件。
 
@@ -28,6 +29,7 @@
 src/main.py                      # 主程序：生成、压缩、渲染图片、推送企业微信
 prompts/daily_briefing.md        # 可编辑 Prompt（强烈建议按你的策略迭代）
 assets/latest_briefing.png       # 最近一次生成的图片（mode=image时产出）
+assets/latest_briefing.html      # 最近一次生成的网页（mode=card时产出）
 requirements.txt                 # Python 依赖
 ```
 
@@ -54,7 +56,9 @@ requirements.txt                 # Python 依赖
 
 在 **Settings → Secrets and variables → Actions → Variables** 添加：
 
-- `DEFAULT_MODE`：`markdown` 或 `image`（默认建议 `markdown`）
+- `DEFAULT_MODE`：`markdown` / `image` / `card`（默认建议 `markdown`）
+- `BRIEFING_PUBLIC_URL`：`mode=card` 时卡片跳转的公网网页地址
+- `BRIEFING_COVER_URL`：`mode=card` 可选封面图 URL
 - `MAX_CHARS`：Markdown 最大长度，默认 `1500`
 - `OPENAI_BASE_URL`（可选）：OpenAI 官方 SDK 支持的 Base URL（若未设置 `OPENAI_COMPAT_BASE_URL`，会读取此变量）
 
@@ -88,6 +92,7 @@ Prompt 在：`prompts/daily_briefing.md`。
 在 `workflow_dispatch` 的 `mode` 输入里选择：
 - `markdown`
 - `image`
+- `card`
 
 ### 方式 B：设置默认模式
 配置仓库 Variable：

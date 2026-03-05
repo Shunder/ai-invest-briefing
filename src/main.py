@@ -25,6 +25,10 @@ MAX_RETRIES = 3
 DEFAULT_MAX_CHARS = 1500
 
 
+def clean_env(value: str | None) -> str:
+    return (value or "").strip()
+
+
 def get_int_env(name: str, default: int) -> int:
     raw = os.getenv(name)
     if raw is None:
@@ -49,14 +53,14 @@ def load_prompt() -> str:
 
 
 def get_client() -> OpenAI:
-    api_key = (
+    api_key = clean_env(
         os.environ.get("OPENAI_COMPAT_API_KEY")
         or os.environ.get("OPENAI_API_KEY")
     )
     if not api_key:
         raise RuntimeError("缺少 OPENAI_API_KEY（或 OPENAI_COMPAT_API_KEY）")
 
-    base_url = (
+    base_url = clean_env(
         os.environ.get("OPENAI_COMPAT_BASE_URL")
         or os.environ.get("OPENAI_BASE_URL")
     )
@@ -139,15 +143,13 @@ def retry_with_backoff(func, action_name: str):
 def call_openai(mode: str, max_chars: int, force: bool) -> str:
     prompt = load_prompt()
     client = get_client()
-    compat_base_url = (
+    compat_base_url = clean_env(
         os.environ.get("OPENAI_COMPAT_BASE_URL")
         or os.environ.get("OPENAI_BASE_URL")
-        or ""
-    ).strip().rstrip("/")
-    compat_api_key = (
+    ).rstrip("/")
+    compat_api_key = clean_env(
         os.environ.get("OPENAI_COMPAT_API_KEY")
         or os.environ.get("OPENAI_API_KEY")
-        or ""
     )
     today = datetime.now(ZoneInfo("Asia/Singapore")).strftime("%Y-%m-%d")
     extra = (
@@ -247,6 +249,62 @@ def compress_markdown(md: str, max_chars: int) -> str:
     if len(md) > max_chars:
         md = md[: max_chars - 40].rstrip() + "\n\n（内容过长已自动压缩，保留核心证据链接）"
     return md
+
+
+def sanitize_markdown(md: str) -> str:
+    """清理工具调用痕迹，避免在企业微信 markdown 里暴露 search(...)。"""
+    cleaned_lines: list[str] = []
+    for line in md.splitlines():
+        stripped = line.strip()
+        if re.match(r"^(search|web_search)\s*\(.*\)\s*$", stripped, flags=re.IGNORECASE):
+            continue
+        if stripped.lower() in {"<think>", "</think>"}:
+            continue
+        cleaned_lines.append(line)
+
+    cleaned = "\n".join(cleaned_lines)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
+
+
+def markdown_to_html(markdown: str) -> str:
+    safe = markdown.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    safe = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", safe)
+    html_lines: list[str] = []
+    for line in safe.splitlines():
+        if line.startswith("# "):
+            html_lines.append(f"<h1>{line[2:]}</h1>")
+        elif line.startswith("## "):
+            html_lines.append(f"<h2>{line[3:]}</h2>")
+        elif line.startswith("- "):
+            html_lines.append(f"<li>{line[2:]}</li>")
+        elif not line.strip():
+            html_lines.append("<br/>")
+        else:
+            html_lines.append(f"<p>{line}</p>")
+
+    body = "\n".join(html_lines)
+    body = re.sub(r"(<li>.*?</li>)", r"<ul>\1</ul>", body, flags=re.DOTALL)
+    body = body.replace("</ul><ul>", "")
+    return f"""<!doctype html>
+<html lang='zh-CN'>
+<head>
+  <meta charset='utf-8'/>
+  <meta name='viewport' content='width=device-width, initial-scale=1'/>
+  <title>每日投资情报早报</title>
+  <style>
+    body {{ background:#0b1020; color:#e6edf3; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; margin:0; }}
+    .wrap {{ max-width:860px; margin:24px auto; background:#121a30; border-radius:14px; padding:24px; line-height:1.7; }}
+    h1 {{ color:#8be9fd; font-size:30px; margin:0 0 10px; }}
+    h2 {{ color:#ffd580; margin-top:20px; }}
+    a {{ color:#4db6ff; }}
+  </style>
+</head>
+<body>
+  <div class='wrap'>{body}</div>
+</body>
+</html>
+"""
 
 
 def load_font(size: int):
@@ -350,9 +408,31 @@ def send_wecom_image(webhook: str, png: bytes):
         raise RuntimeError(f"企业微信 image 发送失败: {json.dumps(data, ensure_ascii=False)}")
 
 
+def send_wecom_news(webhook: str, title: str, description: str, url: str, pic_url: str = ""):
+    payload = {
+        "msgtype": "news",
+        "news": {
+            "articles": [
+                {
+                    "title": title,
+                    "description": description,
+                    "url": url,
+                    "picurl": pic_url,
+                }
+            ]
+        },
+    }
+    r = requests.post(webhook, json=payload, timeout=20)
+    if r.status_code != 200:
+        raise RuntimeError(f"企业微信 news HTTP 错误: {r.status_code} {r.text}")
+    data = r.json()
+    if data.get("errcode") != 0:
+        raise RuntimeError(f"企业微信 news 发送失败: {json.dumps(data, ensure_ascii=False)}")
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description="生成并推送 AI 投资早报")
-    parser.add_argument("--mode", choices=["markdown", "image"], default=os.getenv("DEFAULT_MODE", "markdown"))
+    parser.add_argument("--mode", choices=["markdown", "image", "card"], default=os.getenv("DEFAULT_MODE", "markdown"))
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--max-chars", type=int, default=get_int_env("MAX_CHARS", DEFAULT_MAX_CHARS))
     return parser.parse_args()
@@ -365,11 +445,29 @@ def main():
         raise RuntimeError("缺少 WECOM_WEBHOOK")
 
     markdown = call_openai(args.mode, args.max_chars, args.force)
+    markdown = sanitize_markdown(markdown)
     markdown = compress_markdown(markdown, args.max_chars)
 
     if args.mode == "markdown":
         retry_with_backoff(lambda: send_wecom_markdown(webhook, markdown), "发送企业微信 markdown")
         logging.info("markdown 推送成功")
+        return
+
+    if args.mode == "card":
+        html = markdown_to_html(markdown)
+        html_out = ROOT / "assets" / "latest_briefing.html"
+        html_out.write_text(html, encoding="utf-8")
+        logging.info("已生成网页: %s", html_out)
+
+        page_url = clean_env(os.getenv("BRIEFING_PUBLIC_URL"))
+        if not page_url:
+            raise RuntimeError("mode=card 需要配置 BRIEFING_PUBLIC_URL（可公网访问的网页 URL）")
+        cover_url = clean_env(os.getenv("BRIEFING_COVER_URL"))
+        retry_with_backoff(
+            lambda: send_wecom_news(webhook, "每日投资情报早报", "点击查看当日完整网页版", page_url, cover_url),
+            "发送企业微信 card(news)",
+        )
+        logging.info("card(news) 推送成功")
         return
 
     png = markdown_to_image(markdown)

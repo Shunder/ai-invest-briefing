@@ -10,6 +10,7 @@ import time
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
+from typing import Any
 
 import requests
 from openai import OpenAI
@@ -80,6 +81,48 @@ def normalize_base_url(base_url: str) -> str:
     return normalized
 
 
+def build_chat_completions_url(base_url: str) -> str:
+    normalized = normalize_base_url(base_url)
+    return f"{normalized}/chat/completions"
+
+
+def should_fallback_to_chat_completions(exc: Exception) -> bool:
+    if not isinstance(exc, requests.HTTPError):
+        return False
+    response = exc.response
+    if response is None:
+        return False
+
+    if response.status_code in (400, 404, 405, 415, 422):
+        return True
+
+    text = response.text.lower()
+    fallback_hints = [
+        "responses",
+        "unsupported",
+        "not implemented",
+        "unknown parameter",
+        "web_search",
+        "tools",
+    ]
+    return any(hint in text for hint in fallback_hints)
+
+
+def extract_compat_message_text(data: dict[str, Any]) -> str:
+    message = data.get("choices", [{}])[0].get("message", {})
+    content = message.get("content", "")
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        texts = [
+            item.get("text", "")
+            for item in content
+            if isinstance(item, dict)
+        ]
+        return "\n".join(part for part in texts if part).strip()
+    return ""
+
+
 def retry_with_backoff(func, action_name: str):
     for i in range(MAX_RETRIES):
         try:
@@ -113,59 +156,67 @@ def call_openai(mode: str, max_chars: int, force: bool) -> str:
     )
 
     def _call():
+        user_prompt = (
+            "请基于今天最新可得信息生成《每日投资情报早报》。"
+            "必须执行至少5次web_search，涵盖宏观、科技、中国港股、黄金美元、地缘/贸易，"
+            "并尽可能补充一次资金流/ETF。"
+            "输出必须是中文 markdown，且包含来源链接与日期（YYYY-MM-DD）。"
+            + extra
+        )
+
         if compat_base_url.endswith("/chat/completions"):
+            chat_url = compat_base_url
+        elif compat_base_url:
+            chat_url = build_chat_completions_url(compat_base_url)
+        else:
+            chat_url = ""
+
+        def _call_chat_completions(require_web_search_hint: bool = False):
+            if not chat_url:
+                raise RuntimeError("未配置兼容接口 base_url，无法回退到 chat/completions")
+
+            hint = "" if not require_web_search_hint else "\n\n若不支持 tools 字段，请忽略但尽量联网检索。"
             payload = {
-                "model": "gpt-5.2",
+                "model": os.getenv("OPENAI_MODEL", "gpt-5.2"),
                 "messages": [
                     {"role": "system", "content": prompt},
-                    {
-                        "role": "user",
-                        "content": (
-                            "请基于今天最新可得信息生成《每日投资情报早报》。"
-                            "必须执行至少5次web_search，涵盖宏观、科技、中国港股、黄金美元、地缘/贸易，"
-                            "并尽可能补充一次资金流/ETF。"
-                            "输出必须是中文 markdown，且包含来源链接与日期（YYYY-MM-DD）。"
-                            + extra
-                        ),
-                    },
+                    {"role": "user", "content": user_prompt + hint},
                 ],
             }
             headers = {
                 "Authorization": f"Bearer {compat_api_key}",
                 "Content-Type": "application/json",
             }
-            resp = requests.post(compat_base_url, headers=headers, json=payload, timeout=180)
+            resp = requests.post(chat_url, headers=headers, json=payload, timeout=180)
             resp.raise_for_status()
             return {"compat_chat_completion": resp.json()}
 
-        return client.responses.create(
-            model="gpt-5.2",
+        if compat_base_url.endswith("/chat/completions"):
+            return _call_chat_completions(require_web_search_hint=True)
+
+        try:
+            return client.responses.create(
+            model=os.getenv("OPENAI_MODEL", "gpt-5.2"),
             tools=[{"type": "web_search"}],
             input=[
                 {"role": "system", "content": prompt},
                 {
                     "role": "user",
-                    "content": (
-                        "请基于今天最新可得信息生成《每日投资情报早报》。"
-                        "必须执行至少5次web_search，涵盖宏观、科技、中国港股、黄金美元、地缘/贸易，"
-                        "并尽可能补充一次资金流/ETF。"
-                        "输出必须是中文 markdown，且包含来源链接与日期（YYYY-MM-DD）。"
-                        + extra
-                    ),
+                    "content": user_prompt,
                 },
             ],
             reasoning={"effort": "medium"},
-        )
+            )
+        except Exception as exc:
+            if not should_fallback_to_chat_completions(exc):
+                raise
+            logging.warning("Responses API 不可用，自动回退到 chat/completions: %s", exc)
+            return _call_chat_completions(require_web_search_hint=True)
 
     resp = retry_with_backoff(_call, "OpenAI Responses API 调用")
     if isinstance(resp, dict) and "compat_chat_completion" in resp:
         data = resp["compat_chat_completion"]
-        text = (
-            data.get("choices", [{}])[0]
-            .get("message", {})
-            .get("content", "")
-            .strip()
-        )
+        text = extract_compat_message_text(data)
     else:
         text = (resp.output_text or "").strip()
     if not text:

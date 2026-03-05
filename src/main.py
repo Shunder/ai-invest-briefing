@@ -61,8 +61,24 @@ def get_client() -> OpenAI:
         or os.environ.get("OPENAI_BASE_URL")
     )
     if base_url:
-        return OpenAI(api_key=api_key, base_url=base_url.strip())
+        return OpenAI(api_key=api_key, base_url=normalize_base_url(base_url))
     return OpenAI(api_key=api_key)
+
+
+def normalize_base_url(base_url: str) -> str:
+    normalized = base_url.strip().rstrip("/")
+    invalid_suffixes = ["/chat/completions", "/responses"]
+    for suffix in invalid_suffixes:
+        if normalized.endswith(suffix):
+            fixed = normalized[: -len(suffix)]
+            logging.warning(
+                "检测到 OPENAI_BASE_URL/OPENAI_COMPAT_BASE_URL 配置为接口路径(%s)，"
+                "已自动修正为 API 根路径: %s",
+                normalized,
+                fixed,
+            )
+            return fixed
+    return normalized
 
 
 def retry_with_backoff(func, action_name: str):
